@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /*
- * post-feed-api.js — Đăng bài (ẢNH / VIDEO lên feed) từ bảng "14.3 Đăng bài tự động" lên Facebook Page.
- * KHÁC post-reels-api.js: đăng feed ảnh/video (không phải Reel) và MỖI DÒNG chọn Page riêng
- * qua cột link "Link Page" (trỏ tới bảng 14.1 Pages) → dùng đúng token của page đó.
+ * post-feed-api.js — Đăng bài (ẢNH lên feed / VIDEO thành Reel) từ bảng "Đăng bài tự động" lên Facebook Page.
+ * MỖI DÒNG chọn Page riêng qua cột link "Page" (trỏ tới bảng "14.1 Lấy danh sách pages") → dùng đúng token của page đó.
+ * Loại="Hình ảnh" → đăng feed ảnh (/photos + /feed). Loại="Video" → đăng REEL THẬT (/video_reels, upload phân mảnh).
  *
  * Chạy:  node post-feed-api.js            (đăng thật các dòng đủ điều kiện)
  *        node post-feed-api.js --dry-run  (chỉ liệt kê, không đăng, không ghi Base)
@@ -16,11 +16,11 @@
 'use strict';
 const fs = require('fs'), os = require('os'), path = require('path');
 const CFG = {
-  APP_ID:       process.env.LARK_APP_ID    || 'cli_aa8cccd0b262deed',
+  APP_ID:       process.env.LARK_APP_ID    || 'cli_aaaa968ce1785e17',
   APP_SECRET:   process.env.LARK_APP_SECRET|| '',
-  APP_TOKEN:    process.env.LARK_APP_TOKEN || 'Rnmkbe9vMa7V6ssUP37lh3Cbgdd',
-  TABLE_ID:     process.env.LARK_TABLE_ID  || 'tblxSnM1mHO8gOYD',   // 14.3 Đăng bài tự động
-  PAGES_TABLE:  process.env.PAGES_TABLE_ID || 'tblNYaNnHUhMofPa',   // 14.1 Pages (ID + access_token)
+  APP_TOKEN:    process.env.LARK_APP_TOKEN || 'J62zbhBhtaxrpMsaSzljllffpdh',
+  TABLE_ID:     process.env.LARK_TABLE_ID  || 'tbla3Qc2n9uwCN0z',   // Đăng bài tự động
+  PAGES_TABLE:  process.env.PAGES_TABLE_ID || 'tblfhrKAsRgqb2Db',   // 14.1 Lấy danh sách pages (ID + access_token)
   LARK_DOMAIN:  process.env.LARK_DOMAIN    || 'https://open.larksuite.com',
   GRAPH_VERSION:process.env.GRAPH_VERSION  || 'v21.0',
   RESPECT_SCHEDULE: process.env.RESPECT_SCHEDULE !== 'false',
@@ -92,16 +92,24 @@ async function postPhotos(pageId, token, files, caption) {
   const post=await fbFetch(`${GRAPH}/${pageId}/feed`,{method:'POST',body});
   return { objectId:post.id, permalink:`https://www.facebook.com/${post.id}` };
 }
+// Đăng Reel thật (không phải video feed thường) — upload phân mảnh 3 pha: start → upload binary → finish.
 async function postVideo(pageId, token, file, caption) {
-  const fd=new FormData(); fd.set('access_token',token); if(caption)fd.set('description',caption);
-  fd.set('source', new Blob([fs.readFileSync(file.path)]), file.name||'video.mp4');
-  const j=await fbFetch(`${GRAPH}/${pageId}/videos`,{method:'POST',body:fd});
-  if(!j.id) throw new Error('upload video không có id');
+  const start=await fbFetch(`${GRAPH}/${pageId}/video_reels?upload_phase=start&access_token=${encodeURIComponent(token)}`,{method:'POST'});
+  const videoId=start.video_id, uploadUrl=start.upload_url;
+  if(!videoId||!uploadUrl) throw new Error('start thiếu video_id/upload_url');
+  const buf=fs.readFileSync(file.path);
+  await fbFetch(uploadUrl,{method:'POST',headers:{Authorization:`OAuth ${token}`,offset:'0',file_size:String(buf.length)},body:buf});
+  await fbFetch(`${GRAPH}/${pageId}/video_reels`,{method:'POST',body:new URLSearchParams({upload_phase:'finish',video_id:videoId,video_state:'PUBLISHED',description:caption||'',access_token:token})});
   let permalink='';
-  try{ const st=await fbFetch(`${GRAPH}/${j.id}?fields=permalink_url&access_token=${encodeURIComponent(token)}`,{method:'GET'});
-    permalink=st.permalink_url||''; }catch{}
+  for(let i=0;i<30;i++){ await new Promise(r=>setTimeout(r,6000));
+    try{ const st=await fbFetch(`${GRAPH}/${videoId}?fields=status,permalink_url&access_token=${encodeURIComponent(token)}`,{method:'GET'});
+      const phase=st.status&&(st.status.video_status||(st.status.processing_phase&&st.status.processing_phase.status));
+      if(st.permalink_url)permalink=st.permalink_url;
+      if(phase==='ready'||phase==='PUBLISHED'||(st.status&&st.status.video_status==='ready'))break;
+      if(phase==='error')throw new Error('FB xử lý lỗi: '+JSON.stringify(st.status)); }catch(e){}
+  }
   if(permalink&&permalink.startsWith('/'))permalink='https://www.facebook.com'+permalink;
-  return { objectId:j.id, permalink:permalink||`https://www.facebook.com/${j.id}` };
+  return { objectId:videoId, permalink:permalink||`https://www.facebook.com/${videoId}` };
 }
 async function postComment(pageId, token, objectId, message){
   return fbFetch(`${GRAPH}/${objectId}/comments`,{method:'POST',body:new URLSearchParams({message,access_token:token})});
