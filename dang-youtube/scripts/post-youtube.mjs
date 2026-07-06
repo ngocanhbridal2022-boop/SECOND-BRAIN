@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * post-youtube.mjs — Máy ĐĂNG VIDEO YOUTUBE từ bảng 14.3 "Đăng bài tự động" (GitHub Actions).
+ * post-youtube.mjs — Máy ĐĂNG VIDEO YOUTUBE hẹn giờ từ bảng 16.3 "Đăng bài tự động youtube".
  *
- * Đăng đa kênh từ 1 bảng: dòng nào TICK "Đăng YouTube" + có VIDEO + đến giờ (Lịch đăng bài)
- *   -> tải video từ Lark -> upload YouTube Data API v3 (resumable) đúng "Kênh YouTube"
- *   -> ghi "Link YouTube" + "TT YouTube" = Đã đăng.
+ * Luồng: quét bảng 16.3 -> dòng Trạng thái "Chờ đăng" + có Video + đến giờ (Ngày giờ đăng)
+ *   -> tải video từ Lark -> upload YouTube Data API v3 (resumable) đúng "Kênh"
+ *   -> ghi "Link video" + Trạng thái "Đã đăng".
  *
- * Secrets/vars: LARK_APP_SECRET, LARK_APP_TOKEN, YT_TABLE_ID,
- *   YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_HEBE, YT_REFRESH_NGOCANH
+ * Env: YT_LARK_APP_ID, YT_LARK_APP_SECRET (app HEBE STUDIO — admin, vào được 16.3),
+ *   LARK_APP_TOKEN, YT_TABLE_ID, YT_CLIENT_ID, YT_CLIENT_SECRET, YT_REFRESH_HEBE, YT_REFRESH_NGOCANH
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -17,12 +17,13 @@ const E = process.env;
 const DRY = process.argv.includes('--dry-run');
 const DOMAIN = `https://open.${E.LARK_DOMAIN || 'larksuite'}.com`;
 const BASE = E.LARK_APP_TOKEN || 'J62zbhBhtaxrpMsaSzljllffpdh';
-const TABLE = E.YT_TABLE_ID || 'tbla3Qc2n9uwCN0z';
+const TABLE = E.YT_TABLE_ID;
 const MAX_PER_RUN = parseInt(E.YT_MAX_PER_RUN || '5', 10);
 const now = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 const log = (...a) => console.log(now(), ...a);
 
 const CHANNELS = { 'HEBE studio': E.YT_REFRESH_HEBE, 'Ngọc Ánh Makeup': E.YT_REFRESH_NGOCANH };
+const PRIVACY = { 'Công khai': 'public', 'Không công khai': 'unlisted', 'Riêng tư': 'private' };
 
 async function jfetch(url, opts, tries = 3) {
   let last;
@@ -36,7 +37,7 @@ async function jfetch(url, opts, tries = 3) {
 async function larkToken() {
   const r = await jfetch(`${DOMAIN}/open-apis/auth/v3/tenant_access_token/internal`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ app_id: E.LARK_APP_ID || 'cli_aaaa968ce1785e17', app_secret: E.LARK_APP_SECRET }),
+    body: JSON.stringify({ app_id: E.YT_LARK_APP_ID, app_secret: E.YT_LARK_APP_SECRET }),
   });
   const d = await r.json();
   if (d.code !== 0) throw new Error('Lark token: ' + JSON.stringify(d));
@@ -59,13 +60,13 @@ function txt(v) {
   return v == null ? '' : String(v);
 }
 function firstVideo(fields) {
-  const a = fields['Ảnh/video'];
+  const a = fields['Video'];
   if (!Array.isArray(a)) return null;
   for (const f of a) {
     const name = (f.name || '').toLowerCase(), type = (f.type || '').toLowerCase();
     if (type.startsWith('video') || /\.(mp4|mov|m4v|webm|avi|mkv)$/.test(name)) return f;
   }
-  return null;
+  return a[0] || null;
 }
 async function updateRow(tk, recId, fields) {
   const r = await jfetch(`${DOMAIN}/open-apis/bitable/v1/apps/${BASE}/tables/${TABLE}/records/${recId}`, {
@@ -110,53 +111,52 @@ async function uploadVideo(access, filePath, meta) {
 }
 // ---------- main ----------
 (async () => {
+  if (!TABLE) { console.error('!! Thiếu YT_TABLE_ID'); process.exit(1); }
   const tk = await larkToken();
   const rows = await listRows(tk);
   const nowMs = Date.now();
   const due = rows.filter(r => {
     const f = r.fields;
-    const on = f['Đăng YouTube'] === true;
+    const st = txt(f['Trạng thái']).trim();
     const hasVid = !!firstVideo(f);
-    const doneOrErr = ['Đã đăng'].includes(txt(f['TT YouTube']).trim());
-    const sched = f['Lịch đăng bài'];
+    const sched = f['Ngày giờ đăng'];
     const timeOk = !sched || sched <= nowMs;
-    return on && hasVid && !doneOrErr && timeOk;
-  }).sort((a, b) => (a.fields['Lịch đăng bài'] || 0) - (b.fields['Lịch đăng bài'] || 0)).slice(0, MAX_PER_RUN);
+    return st === 'Chờ đăng' && hasVid && timeOk;
+  }).sort((a, b) => (a.fields['Ngày giờ đăng'] || 0) - (b.fields['Ngày giờ đăng'] || 0)).slice(0, MAX_PER_RUN);
 
-  if (!due.length) { log('Không có video YouTube nào đến hạn (tick "Đăng YouTube" + có video + đến giờ). Xong.'); return; }
-  log(`Có ${due.length} video cần đăng YouTube${DRY ? ' (DRY-RUN)' : ''}.`);
+  if (!due.length) { log('Không có video nào đến hạn (Trạng thái "Chờ đăng" + có Video + đến giờ). Xong.'); return; }
+  log(`Có ${due.length} video đến hạn${DRY ? ' (DRY-RUN)' : ''}.`);
 
   let posted = 0, failed = 0;
   for (const r of due) {
     const f = r.fields;
-    const channel = txt(f['Kênh YouTube']).trim();
+    const channel = txt(f['Kênh']).trim();
     const refresh = CHANNELS[channel];
-    const noidung = txt(f['Nội dung']);
-    let title = txt(f['Tiêu đề YT']).trim() || noidung.split('\n')[0].slice(0, 100) || 'Video';
-    title = title.slice(0, 100);
-    const isShorts = txt(f['Loại YT']).includes('Shorts') || (!txt(f['Loại YT']) && true); // mặc định Shorts
-    let desc = noidung;
+    const title = (txt(f['Tiêu đề']).trim() || 'Video').slice(0, 100);
+    const isShorts = txt(f['Loại']).includes('Shorts');
+    let desc = txt(f['Mô tả']);
     if (isShorts && !/#shorts/i.test(desc)) desc = (desc + '\n\n#Shorts').trim();
+    const tags = txt(f['Tags']).split(',').map(s => s.trim()).filter(Boolean).slice(0, 15);
+    const privacy = PRIVACY[txt(f['Chế độ']).trim()] || 'public';
     const vid = firstVideo(f);
 
-    if (!channel) { log(`  ✗ ${title}: chưa chọn "Kênh YouTube" — bỏ qua`); continue; }
-    if (!refresh) { log(`  ✗ ${title}: kênh "${channel}" chưa có token`); if (!DRY) await updateRow(tk, r.record_id, { 'TT YouTube': 'Lỗi', 'Log YouTube': `Kênh "${channel}" chưa cấu hình` }); failed++; continue; }
-
-    log(`  ▶ ${title} | kênh: ${channel} | ${isShorts ? 'Shorts' : 'Video dài'}`);
+    if (!refresh) { log(`  ✗ ${title}: kênh "${channel}" chưa có token`); if (!DRY) await updateRow(tk, r.record_id, { 'Trạng thái': 'Lỗi', 'Ghi chú lỗi': `Kênh "${channel}" chưa cấu hình` }); failed++; continue; }
+    log(`  ▶ ${title} | kênh: ${channel} | ${isShorts ? 'Shorts' : 'Video dài'} | ${privacy}`);
     if (DRY) { posted++; continue; }
 
+    await updateRow(tk, r.record_id, { 'Trạng thái': 'Đang đăng' });
     let videoPath;
     try {
       videoPath = await downloadVideo(tk, vid.file_token, vid.name);
       const access = await accessToken(refresh);
-      const meta = { snippet: { title, description: desc, categoryId: '22' }, status: { privacyStatus: 'public', selfDeclaredMadeForKids: false } };
+      const meta = { snippet: { title, description: desc, tags, categoryId: '22' }, status: { privacyStatus: privacy, selfDeclaredMadeForKids: false } };
       const res = await uploadVideo(access, videoPath, meta);
-      await updateRow(tk, r.record_id, { 'TT YouTube': 'Đã đăng', 'Link YouTube': res.url, 'Log YouTube': '' });
+      await updateRow(tk, r.record_id, { 'Trạng thái': 'Đã đăng', 'Link video': res.url, 'Ghi chú lỗi': '' });
       log(`    ✔ ĐÃ ĐĂNG: ${res.url}`);
       posted++;
     } catch (e) {
       log(`    ✗ LỖI: ${e.message}`);
-      await updateRow(tk, r.record_id, { 'TT YouTube': 'Lỗi', 'Log YouTube': e.message.slice(0, 300) });
+      await updateRow(tk, r.record_id, { 'Trạng thái': 'Lỗi', 'Ghi chú lỗi': e.message.slice(0, 300) });
       failed++;
       if (e.quota) { log('    ⛔ Chạm quota YouTube — dừng, để dành lượt sau.'); break; }
     } finally {

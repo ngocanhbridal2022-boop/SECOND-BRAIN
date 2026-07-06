@@ -20,9 +20,10 @@ jobs:
           node-version: 20
       - name: Đăng video YouTube (Lark Base -> YouTube Data API v3)
         env:
-          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          YT_LARK_APP_ID: cli_a9057296cfb89e1a
+          YT_LARK_APP_SECRET: ${{ secrets.YT_LARK_APP_SECRET }}
           LARK_APP_TOKEN: J62zbhBhtaxrpMsaSzljllffpdh
-          YT_TABLE_ID: tbla3Qc2n9uwCN0z
+          YT_TABLE_ID: tbl7cPQda7c6w8ne
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_HEBE: ${{ secrets.YT_REFRESH_HEBE }}
