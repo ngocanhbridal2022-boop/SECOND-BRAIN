@@ -22,7 +22,7 @@ jobs:
         env:
           LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
           LARK_APP_TOKEN: J62zbhBhtaxrpMsaSzljllffpdh
-          YT_TABLE_ID: ${{ vars.YT_TABLE_ID }}
+          YT_TABLE_ID: tbla3Qc2n9uwCN0z
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_HEBE: ${{ secrets.YT_REFRESH_HEBE }}
