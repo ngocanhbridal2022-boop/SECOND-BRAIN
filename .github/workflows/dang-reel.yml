@@ -1,6 +1,8 @@
 name: dang-reel
 
 on:
+  schedule:
+    - cron: '*/30 * * * *'   # tự quét Base mỗi 30 phút, đăng bài đến giờ (tắt máy vẫn chạy)
   repository_dispatch:
     types: [dang-reel]        # gọi qua HTTP: {"event_type":"dang-reel", ...}
   workflow_dispatch:          # cho phép bấm chạy tay trên GitHub UI
