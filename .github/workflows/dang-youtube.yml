@@ -1,0 +1,35 @@
+name: dang-youtube
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'   # quét bảng mỗi 30 phút, đăng video đến giờ (tắt máy vẫn chạy)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Chỉ liệt kê, không đăng thật"
+        type: boolean
+        default: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Đăng video YouTube (Lark Base -> YouTube Data API v3)
+        env:
+          LARK_APP_SECRET: ${{ secrets.LARK_APP_SECRET }}
+          LARK_APP_TOKEN: J62zbhBhtaxrpMsaSzljllffpdh
+          YT_TABLE_ID: ${{ vars.YT_TABLE_ID }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_HEBE: ${{ secrets.YT_REFRESH_HEBE }}
+          YT_REFRESH_NGOCANH: ${{ secrets.YT_REFRESH_NGOCANH }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            node dang-youtube/scripts/post-youtube.mjs --dry-run
+          else
+            node dang-youtube/scripts/post-youtube.mjs
+          fi
