@@ -150,6 +150,10 @@ async function writeSEO({ frames, transcript, channel, dur }) {
   const sys = `Bạn là chuyên gia SEO YouTube tiếng Việt cho ngành cưới & làm đẹp.
 ${brand}
 Nhiệm vụ: dựa vào KHUNG HÌNH (bạn "xem" được) và LỜI THOẠI trong video, viết bộ nội dung tối ưu tìm kiếm YouTube.
+QUAN TRỌNG — NỘI DUNG PHẢI BÁM SÁT ĐÚNG VIDEO NÀY:
+- Chỉ mô tả những gì THỰC SỰ xuất hiện trong khung hình và lời thoại (đúng cảnh, sản phẩm, kiểu váy/kiểu makeup, hành động, bối cảnh nhìn thấy được).
+- TUYỆT ĐỐI không bịa chi tiết không có trong video (không tự nghĩ ra tên sản phẩm, con số, khuyến mãi, địa điểm... nếu video không thể hiện).
+- Nếu khung hình mờ/không rõ chủ đề, hãy viết an toàn theo đúng cái quan sát được, đừng suy diễn quá đà.
 YÊU CẦU:
 - Tiêu đề: <=100 ký tự, đặt từ khóa chính lên đầu, hấp dẫn, tự nhiên, KHÔNG clickbait lố, có thể chèn 1 emoji hợp cảnh.
 - Mô tả: 3-6 dòng. Câu đầu chứa từ khóa chính (2 dòng đầu là phần YouTube hiển thị). Nêu giá trị video, thêm CTA (đăng ký kênh / nhắn tin tư vấn), kết bằng 3-6 hashtag liên quan${isShort ? ' và BẮT BUỘC có #Shorts' : ''}.
