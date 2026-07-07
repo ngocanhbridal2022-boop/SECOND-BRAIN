@@ -1,0 +1,36 @@
+name: viet-seo-youtube
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'   # quét bảng mỗi 20 phút, viết SEO cho video mới thả vào (tắt máy vẫn chạy)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Chỉ viết thử ra log, KHÔNG ghi vào bảng"
+        type: boolean
+        default: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Cài ffmpeg (xem khung hình + tách tiếng)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Viết nội dung chuẩn SEO YouTube (Claude xem video -> Lark Base)
+        env:
+          YT_LARK_APP_ID: cli_a9057296cfb89e1a
+          YT_LARK_APP_SECRET: ${{ secrets.YT_LARK_APP_SECRET }}
+          LARK_APP_TOKEN: J62zbhBhtaxrpMsaSzljllffpdh
+          YT_TABLE_ID: tbl7cPQda7c6w8ne
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            node viet-seo-youtube/scripts/write-youtube-seo.mjs --dry-run
+          else
+            node viet-seo-youtube/scripts/write-youtube-seo.mjs
+          fi
