@@ -30,7 +30,7 @@ const DRY = process.argv.includes('--dry-run');
 if (!DRY && !CFG.APP_SECRET) { console.error('!! Thiếu LARK_APP_SECRET — đặt qua biến môi trường.'); process.exit(1); }
 
 const F = { link:'Link Page', type:'Loại', caption:'Nội dung', comment:'Comment ebook', media:'Ảnh/video',
-            schedule:'Lịch đăng bài', status:'Trạng thái', log:'Log', linkPost:'Link bài đăng' };
+            schedule:'Lịch đăng bài', status:'Trạng thái', log:'Log', linkPost:'Link bài đăng', ref:'Ref (máy)' };
 const DONE = 'Thành công', FAIL = 'Thất bại';
 const now = () => new Date().toISOString().replace('T',' ').slice(0,19);
 const log = (...a) => console.log(now(), ...a);
@@ -139,33 +139,52 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
   for(const row of rows){
     const recId=row.record_id;
     if(plain(row.fields[F.status])===DONE) { skip++; continue; }              // đã đăng
-    const pageRecId=linkRecIds(row.fields[F.link])[0];
+    const pageRecIds=linkRecIds(row.fields[F.link]);                          // ĐA PAGE: lấy TẤT CẢ page được chọn
     const atts=Array.isArray(row.fields[F.media])?row.fields[F.media]:[];
-    if(!pageRecId || atts.length===0) { skip++; continue; }                   // dòng chưa sẵn sàng → bỏ qua im lặng
-    const pg=pageMap.get(pageRecId);
-    if(!pg||!pg.fbId||!pg.token){ log(`  [LỖI] ${recId}: Page link không có ID/token trong bảng 14.1`); if(!DRY)await updateRow(tk,recId,{[F.status]:FAIL,[F.log]:`${now()} - Page thiếu ID/token`}); err++; continue; }
+    if(pageRecIds.length===0 || atts.length===0) { skip++; continue; }        // dòng chưa sẵn sàng → bỏ qua im lặng
 
     if(CFG.RESPECT_SCHEDULE){ const s=scheduleMs(row.fields[F.schedule]); if(s&&s>nowMs){ log(`  [CHỜ GIỜ] ${recId}: hẹn ${new Date(s).toISOString().slice(0,16)}`); wait++; continue; } }
+
+    // Chỉ giữ page có đủ ID + token trong bảng 14.1
+    const pages=pageRecIds.map(id=>({recId:id,...(pageMap.get(id)||{})})).filter(p=>p.fbId&&p.token);
+    if(pages.length===0){ log(`  [LỖI] ${recId}: các Page link đều thiếu ID/token trong 14.1`); if(!DRY)await updateRow(tk,recId,{[F.status]:FAIL,[F.log]:`${now()} - Page thiếu ID/token`}); err++; continue; }
 
     const caption=plain(row.fields[F.caption]);
     const loai=plain(row.fields[F.type]);
     let kind = /video/i.test(loai) ? 'video' : /ảnh|hình|image|photo/i.test(loai) ? 'image' : (atts.some(isVid)?'video':'image');
     const files = kind==='video' ? [ atts.find(isVid)||atts[0] ] : atts.filter(a=>isImg(a)||!isVid(a));
-    log(`  >> ${recId} | ${pg.name} | ${kind} | ${files.length} file | "${caption.slice(0,40).replace(/\n/g,' ')}"`);
+    log(`  >> ${recId} | ${pages.length} page [${pages.map(p=>p.name).join(', ')}] | ${kind} | ${files.length} file | "${caption.slice(0,40).replace(/\n/g,' ')}"`);
     if(DRY){ const c=plain(row.fields[F.comment]).trim(); if(c)log(`     [DRY] comment: ${c.slice(0,60)}`); continue; }
 
     const tmp=[];
     try{
+      // Tải media 1 lần rồi đăng cho từng page
       for(let i=0;i<files.length;i++){ const f=files[i]; const p=path.join(os.tmpdir(),`feed_${recId}_${i}_${(f.name||'m').replace(/[^\w.]/g,'')}`);
         await downloadMedia(tk,f.file_token,p); f.path=p; tmp.push(p); }
-      const res = kind==='video' ? await postVideo(pg.fbId,pg.token,files[0],caption)
-                                  : await postPhotos(pg.fbId,pg.token,files,caption);
-      // Auto comment (link ebook) — không làm hỏng bài nếu lỗi.
-      let cmtNote=''; const commentText=plain(row.fields[F.comment]).trim();
-      if(commentText){ try{ await postComment(pg.fbId,pg.token,res.objectId,commentText); cmtNote=' +cmt'; }
-        catch(e){ cmtNote=' (cmt lỗi)'; log(`     ! comment lỗi: ${String(e.message||e).slice(0,120)}`); } }
-      await updateRow(tk,recId,{ [F.status]:DONE, [F.linkPost]:{link:res.permalink,text:'Xem bài'}, [F.log]:`${now()} - OK - ${res.objectId}${cmtNote}` });
-      log(`     ✔ ĐÃ ĐĂNG: ${res.permalink}`); ok++;
+      const commentText=plain(row.fields[F.comment]).trim();
+      const results=[], refs=[]; let anyOk=false;
+      for(const pg of pages){
+        try{
+          const res = kind==='video' ? await postVideo(pg.fbId,pg.token,files[0],caption)
+                                      : await postPhotos(pg.fbId,pg.token,files,caption);
+          let cmtNote='';
+          if(commentText){ try{ await postComment(pg.fbId,pg.token,res.objectId,commentText); cmtNote=' +cmt'; }
+            catch(e){ cmtNote=' (cmt lỗi)'; } }
+          results.push(`${pg.name}: OK ${res.objectId}${cmtNote}`);
+          refs.push({t:'fb',oid:res.objectId,page:pg.recId,link:res.permalink});
+          anyOk=true; log(`     ✔ ${pg.name}: ${res.permalink}`);
+        }catch(e){ const m=String(e.message||e).slice(0,150); results.push(`${pg.name}: LỖI ${m}`); log(`     ✖ ${pg.name}: ${m}`); }
+      }
+      // Gộp Ref (máy): giữ ref YouTube (nếu step YT đã ghi), thay ref FB của lần này
+      let allRefs=[]; try{ allRefs=JSON.parse(plain(row.fields[F.ref])||'[]'); if(!Array.isArray(allRefs))allRefs=[]; }catch{}
+      allRefs=allRefs.filter(x=>x&&x.t!=='fb').concat(refs);
+      const firstLink=(refs.find(r=>r.link)||{}).link||'';
+      const fields={ [F.log]:`${now()} - ${results.join(' | ')}`.slice(0,900), [F.ref]:JSON.stringify(allRefs) };
+      if(firstLink) fields[F.linkPost]={link:firstLink,text:'Xem bài'};
+      // ≥1 page OK → "Thành công" (KHÔNG retry để tránh đăng trùng các page đã lên); tất cả fail → "Thất bại" (chạy lại lượt sau)
+      fields[F.status]= anyOk ? DONE : FAIL;
+      await updateRow(tk,recId,fields);
+      if(anyOk) ok++; else err++;
     }catch(e){ const msg=String(e.message||e).slice(0,300); log(`     ✖ LỖI: ${msg}`);
       try{await updateRow(tk,recId,{[F.status]:FAIL,[F.log]:`${now()} - LỖI - ${msg}`});}catch{} err++;
     }finally{ tmp.forEach(p=>{try{fs.unlinkSync(p)}catch{}}); }
