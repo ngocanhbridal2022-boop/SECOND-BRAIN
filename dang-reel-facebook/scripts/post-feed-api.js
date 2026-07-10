@@ -29,8 +29,9 @@ const GRAPH = `https://graph.facebook.com/${CFG.GRAPH_VERSION}`;
 const DRY = process.argv.includes('--dry-run');
 if (!DRY && !CFG.APP_SECRET) { console.error('!! Thiếu LARK_APP_SECRET — đặt qua biến môi trường.'); process.exit(1); }
 
-const F = { link:'Link Page', type:'Loại', caption:'Nội dung', comment:'Comment ebook', media:'Ảnh/video',
+const F = { link:'Link Page', type:'Loại', caption:'Nội dung', comment:'Comment tự động', media:'Ảnh/video',
             schedule:'Lịch đăng bài', status:'Trạng thái', log:'Log', linkPost:'Link bài đăng', ref:'Ref (máy)' };
+const COMMENT_DELAY_MS = parseInt(process.env.COMMENT_DELAY_MS || '120000', 10);  // tự bình luận sau 2 phút
 const DONE = 'Thành công', FAIL = 'Thất bại';
 const now = () => new Date().toISOString().replace('T',' ').slice(0,19);
 const log = (...a) => console.log(now(), ...a);
@@ -136,6 +137,7 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
   const rows=await listAll(tk, CFG.TABLE_ID);
   const nowMs=Date.now();
   let ok=0,err=0,wait=0,skip=0;
+  const pending=[];   // hàng đợi bình luận: đăng xong CẢ LOẠT rồi chờ 2 phút mới cmt (FB đỡ bóp reach bài có link)
   for(const row of rows){
     const recId=row.record_id;
     if(plain(row.fields[F.status])===DONE) { skip++; continue; }              // đã đăng
@@ -167,10 +169,9 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
         try{
           const res = kind==='video' ? await postVideo(pg.fbId,pg.token,files[0],caption)
                                       : await postPhotos(pg.fbId,pg.token,files,caption);
-          let cmtNote='';
-          if(commentText){ try{ await postComment(pg.fbId,pg.token,res.objectId,commentText); cmtNote=' +cmt'; }
-            catch(e){ cmtNote=' (cmt lỗi)'; } }
-          results.push(`${pg.name}: OK ${res.objectId}${cmtNote}`);
+          // Có nội dung ở "Comment tự động" → xếp hàng, cmt SAU 2 phút (không cmt ngay)
+          if(commentText) pending.push({fbId:pg.fbId,token:pg.token,oid:res.objectId,msg:commentText,name:pg.name});
+          results.push(`${pg.name}: OK ${res.objectId}${commentText?' [+cmt hẹn]':''}`);
           refs.push({t:'fb',oid:res.objectId,page:pg.recId,link:res.permalink});
           anyOk=true; log(`     ✔ ${pg.name}: ${res.permalink}`);
         }catch(e){ const m=String(e.message||e).slice(0,150); results.push(`${pg.name}: LỖI ${m}`); log(`     ✖ ${pg.name}: ${m}`); }
@@ -188,6 +189,21 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
     }catch(e){ const msg=String(e.message||e).slice(0,300); log(`     ✖ LỖI: ${msg}`);
       try{await updateRow(tk,recId,{[F.status]:FAIL,[F.log]:`${now()} - LỖI - ${msg}`});}catch{} err++;
     }finally{ tmp.forEach(p=>{try{fs.unlinkSync(p)}catch{}}); }
+  }
+  // ===== TỰ BÌNH LUẬN SAU 2 PHÚT =====
+  // Đăng xong hết mới chờ 1 lần rồi thả bình luận (link ebook/phễu...) xuống từng bài.
+  if(pending.length){
+    if(DRY){ log(`[DRY] sẽ tự bình luận ${pending.length} bài sau ${Math.round(COMMENT_DELAY_MS/1000)}s.`); }
+    else{
+      log(`Chờ ${Math.round(COMMENT_DELAY_MS/1000)}s rồi tự bình luận ${pending.length} bài...`);
+      await new Promise(r=>setTimeout(r,COMMENT_DELAY_MS));
+      let c=0;
+      for(const p of pending){
+        try{ await postComment(p.fbId,p.token,p.oid,p.msg); c++; log(`     💬 đã bình luận: ${p.name} (${p.oid})`); }
+        catch(e){ log(`     ! bình luận lỗi ${p.name}: ${String(e.message||e).slice(0,140)}`); }
+      }
+      log(`Bình luận xong: ${c}/${pending.length}.`);
+    }
   }
   log(`Xong. Đăng: ${ok}, Lỗi: ${err}, Chờ giờ: ${wait}, Bỏ qua: ${skip}.`);
 })().catch(e=>{console.error('FATAL',e.message||e);process.exit(1);});
