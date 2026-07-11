@@ -28,6 +28,7 @@ jobs:
           YT_TABLE_ID: tbl7cPQda7c6w8ne
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          YT_SEO_MODEL: claude-sonnet-5
         run: |
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
             node viet-seo-youtube/scripts/write-youtube-seo.mjs --dry-run
