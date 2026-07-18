@@ -145,7 +145,15 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
     const atts=Array.isArray(row.fields[F.media])?row.fields[F.media]:[];
     if(pageRecIds.length===0 || atts.length===0) { skip++; continue; }        // dòng chưa sẵn sàng → bỏ qua im lặng
 
-    if(CFG.RESPECT_SCHEDULE){ const s=scheduleMs(row.fields[F.schedule]); if(s&&s>nowMs){ log(`  [CHỜ GIỜ] ${recId}: hẹn ${new Date(s).toISOString().slice(0,16)}`); wait++; continue; } }
+    // CHỐT AN TOÀN: dòng còn "nháp" thì KHÔNG đăng.
+    //  - Chưa có Nội dung  → tránh đăng bài trống chữ.
+    //  - Chưa hẹn Lịch đăng → tránh đăng sớm khi cô mới thả ảnh vào kho, chưa lên lịch.
+    // (Muốn đăng ngay: chỉ cần đặt Lịch đăng = thời điểm hiện tại/quá khứ.)
+    if(!plain(row.fields[F.caption]).trim()) { log(`  [NHÁP] ${recId}: chưa có Nội dung → chưa đăng`); skip++; continue; }
+    const schedMs = scheduleMs(row.fields[F.schedule]);
+    if(!schedMs) { log(`  [NHÁP] ${recId}: chưa hẹn Lịch đăng → chưa đăng`); skip++; continue; }
+
+    if(CFG.RESPECT_SCHEDULE && schedMs>nowMs){ log(`  [CHỜ GIỜ] ${recId}: hẹn ${new Date(schedMs).toISOString().slice(0,16)}`); wait++; continue; }
 
     // Chỉ giữ page có đủ ID + token trong bảng 14.1
     const pages=pageRecIds.map(id=>({recId:id,...(pageMap.get(id)||{})})).filter(p=>p.fbId&&p.token);
