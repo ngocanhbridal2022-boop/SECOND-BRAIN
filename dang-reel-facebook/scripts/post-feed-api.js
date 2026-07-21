@@ -32,6 +32,8 @@ if (!DRY && !CFG.APP_SECRET) { console.error('!! Thiếu LARK_APP_SECRET — đ�
 const F = { link:'Link Page', type:'Loại', caption:'Nội dung', comment:'Comment tự động', media:'Ảnh/video',
             schedule:'Lịch đăng bài', status:'Trạng thái', log:'Log', linkPost:'Link bài đăng', ref:'Ref (máy)' };
 const COMMENT_DELAY_MS = parseInt(process.env.COMMENT_DELAY_MS || '120000', 10);  // tự bình luận sau 2 phút
+const CH = require('./comment-hebe');                                             // bộ 3–4 cmt "lộn xộn về HEBE" + ảnh
+const SEED_CMT = process.env.HEBE_SEED_COMMENTS !== '0';                          // bật mặc định; đặt =0 để tắt
 const DONE = 'Thành công', FAIL = 'Thất bại';
 const now = () => new Date().toISOString().replace('T',' ').slice(0,19);
 const log = (...a) => console.log(now(), ...a);
@@ -112,8 +114,11 @@ async function postVideo(pageId, token, file, caption) {
   if(permalink&&permalink.startsWith('/'))permalink='https://www.facebook.com'+permalink;
   return { objectId:videoId, permalink:permalink||`https://www.facebook.com/${videoId}` };
 }
-async function postComment(pageId, token, objectId, message){
-  return fbFetch(`${GRAPH}/${objectId}/comments`,{method:'POST',body:new URLSearchParams({message,access_token:token})});
+async function postComment(pageId, token, objectId, message, attachmentUrl){
+  const body={access_token:token};
+  if(message) body.message=message;
+  if(attachmentUrl) body.attachment_url=attachmentUrl;   // FB tự tải ảnh công khai gắn kèm (1 ảnh/cmt)
+  return fbFetch(`${GRAPH}/${objectId}/comments`,{method:'POST',body:new URLSearchParams(body)});
 }
 function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')return cell; // Lark datetime = epoch ms
   const t=plain(cell).trim(); if(!t)return null;
@@ -164,7 +169,10 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
     let kind = /video/i.test(loai) ? 'video' : /ảnh|hình|image|photo/i.test(loai) ? 'image' : (atts.some(isVid)?'video':'image');
     const files = kind==='video' ? [ atts.find(isVid)||atts[0] ] : atts.filter(a=>isImg(a)||!isVid(a));
     log(`  >> ${recId} | ${pages.length} page [${pages.map(p=>p.name).join(', ')}] | ${kind} | ${files.length} file | "${caption.slice(0,40).replace(/\n/g,' ')}"`);
-    if(DRY){ const c=plain(row.fields[F.comment]).trim(); if(c)log(`     [DRY] comment: ${c.slice(0,60)}`); continue; }
+    if(DRY){ const c=plain(row.fields[F.comment]).trim(); if(c)log(`     [DRY] comment tay: ${c.slice(0,60)}`);
+      if(SEED_CMT){ const plan=CH.buildPlan('dry_'+recId);
+        plan.forEach((x,i)=>log(`     [DRY] cmt HEBE ${i+1}${x.imageUrl?'📷':'  '}: ${x.message.slice(0,55).replace(/\n/g,' ')}${x.imageUrl?'  | '+x.imageUrl.replace(CH.IMG,'…'):''}`)); }
+      continue; }
 
     const tmp=[];
     try{
@@ -179,7 +187,12 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
                                       : await postPhotos(pg.fbId,pg.token,files,caption);
           // Có nội dung ở "Comment tự động" → xếp hàng, cmt SAU 2 phút (không cmt ngay)
           if(commentText) pending.push({fbId:pg.fbId,token:pg.token,oid:res.objectId,msg:commentText,name:pg.name});
-          results.push(`${pg.name}: OK ${res.objectId}${commentText?' [+cmt hẹn]':''}`);
+          // + Bộ 3–4 comment "lộn xộn về HEBE" KÈM ẢNH (cô Ánh chốt 2026-07-20). Cùng hàng chờ, thả sau 2 phút.
+          let seedN=0;
+          if(SEED_CMT) for(const c of CH.buildPlan(res.objectId)){
+            pending.push({fbId:pg.fbId,token:pg.token,oid:res.objectId,msg:c.message,img:c.imageUrl,name:pg.name}); seedN++;
+          }
+          results.push(`${pg.name}: OK ${res.objectId}${commentText?' [+cmt hẹn]':''}${seedN?` [+${seedN} cmt HEBE]`:''}`);
           refs.push({t:'fb',oid:res.objectId,page:pg.recId,link:res.permalink});
           anyOk=true; log(`     ✔ ${pg.name}: ${res.permalink}`);
         }catch(e){ const m=String(e.message||e).slice(0,150); results.push(`${pg.name}: LỖI ${m}`); log(`     ✖ ${pg.name}: ${m}`); }
@@ -206,9 +219,11 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
       log(`Chờ ${Math.round(COMMENT_DELAY_MS/1000)}s rồi tự bình luận ${pending.length} bài...`);
       await new Promise(r=>setTimeout(r,COMMENT_DELAY_MS));
       let c=0;
-      for(const p of pending){
-        try{ await postComment(p.fbId,p.token,p.oid,p.msg); c++; log(`     💬 đã bình luận: ${p.name} (${p.oid})`); }
+      for(let i=0;i<pending.length;i++){
+        const p=pending[i];
+        try{ await postComment(p.fbId,p.token,p.oid,p.msg,p.img); c++; log(`     💬${p.img?'📷':''} đã bình luận: ${p.name} (${p.oid})`); }
         catch(e){ log(`     ! bình luận lỗi ${p.name}: ${String(e.message||e).slice(0,140)}`); }
+        if(i<pending.length-1) await new Promise(r=>setTimeout(r, 3000 + Math.floor(Math.random()*3000))); // rải 3–6s chống spam
       }
       log(`Bình luận xong: ${c}/${pending.length}.`);
     }
