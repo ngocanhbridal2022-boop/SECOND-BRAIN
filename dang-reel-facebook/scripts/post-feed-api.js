@@ -32,8 +32,11 @@ if (!DRY && !CFG.APP_SECRET) { console.error('!! Thiếu LARK_APP_SECRET — đ�
 const F = { link:'Link Page', type:'Loại', caption:'Nội dung', comment:'Comment tự động', media:'Ảnh/video',
             schedule:'Lịch đăng bài', status:'Trạng thái', log:'Log', linkPost:'Link bài đăng', ref:'Ref (máy)' };
 const COMMENT_DELAY_MS = parseInt(process.env.COMMENT_DELAY_MS || '120000', 10);  // tự bình luận sau 2 phút
-const CH = require('./comment-hebe');                                             // bộ 3–4 cmt "lộn xộn về HEBE" + ảnh
+const CH = require('./comment-hebe');                                             // bộ comment "lộn xộn về HEBE" + ảnh
 const SEED_CMT = process.env.HEBE_SEED_COMMENTS !== '0';                          // bật mặc định; đặt =0 để tắt
+// CHỈ seeding comment CƯỚI trên PAGE CƯỚI (né page cá nhân/makeup). Khớp tên page.
+const WEDDING_RE = new RegExp(process.env.HEBE_WEDDING_PAGE_RE || 'cưới|bridal|cô dâu', 'i');
+const isWeddingPage = name => WEDDING_RE.test(name || '');
 const DONE = 'Thành công', FAIL = 'Thất bại';
 const now = () => new Date().toISOString().replace('T',' ').slice(0,19);
 const log = (...a) => console.log(now(), ...a);
@@ -170,8 +173,9 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
     const files = kind==='video' ? [ atts.find(isVid)||atts[0] ] : atts.filter(a=>isImg(a)||!isVid(a));
     log(`  >> ${recId} | ${pages.length} page [${pages.map(p=>p.name).join(', ')}] | ${kind} | ${files.length} file | "${caption.slice(0,40).replace(/\n/g,' ')}"`);
     if(DRY){ const c=plain(row.fields[F.comment]).trim(); if(c)log(`     [DRY] comment tay: ${c.slice(0,60)}`);
-      if(SEED_CMT){ const plan=CH.buildPlan('dry_'+recId);
+      if(SEED_CMT && pages.some(p=>isWeddingPage(p.name))){ const plan=CH.buildPlan('dry_'+recId);
         plan.forEach((x,i)=>log(`     [DRY] cmt HEBE ${i+1}${x.imageUrl?'📷':'  '}: ${x.message.slice(0,55).replace(/\n/g,' ')}${x.imageUrl?'  | '+x.imageUrl.replace(CH.IMG,'…'):''}`)); }
+      else if(SEED_CMT) log(`     [DRY] (không seed cmt HEBE — page ≠ cưới)`);
       continue; }
 
     const tmp=[];
@@ -187,12 +191,12 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
                                       : await postPhotos(pg.fbId,pg.token,files,caption);
           // Có nội dung ở "Comment tự động" → xếp hàng, cmt SAU 2 phút (không cmt ngay)
           if(commentText) pending.push({fbId:pg.fbId,token:pg.token,oid:res.objectId,msg:commentText,name:pg.name});
-          // + Bộ 3–4 comment "lộn xộn về HEBE" KÈM ẢNH (cô Ánh chốt 2026-07-20). Cùng hàng chờ, thả sau 2 phút.
+          // + Bộ comment "lộn xộn về HEBE" KÈM ẢNH (cô Ánh chốt 2026-07-20). CHỈ trên PAGE CƯỚI. Thả sau 2 phút.
           let seedN=0;
-          if(SEED_CMT) for(const c of CH.buildPlan(res.objectId)){
+          if(SEED_CMT && isWeddingPage(pg.name)) for(const c of CH.buildPlan(res.objectId)){
             pending.push({fbId:pg.fbId,token:pg.token,oid:res.objectId,msg:c.message,img:c.imageUrl,name:pg.name}); seedN++;
           }
-          results.push(`${pg.name}: OK ${res.objectId}${commentText?' [+cmt hẹn]':''}${seedN?` [+${seedN} cmt HEBE]`:''}`);
+          results.push(`${pg.name}: OK ${res.objectId}${commentText?' [+cmt hẹn]':''}${seedN?` [+${seedN} cmt HEBE]`:(SEED_CMT&&!isWeddingPage(pg.name)?' [không seed: page ≠ cưới]':'')}`);
           refs.push({t:'fb',oid:res.objectId,page:pg.recId,link:res.permalink});
           anyOk=true; log(`     ✔ ${pg.name}: ${res.permalink}`);
         }catch(e){ const m=String(e.message||e).slice(0,150); results.push(`${pg.name}: LỖI ${m}`); log(`     ✖ ${pg.name}: ${m}`); }
