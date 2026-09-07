@@ -38,6 +38,23 @@ const SEED_CMT = process.env.HEBE_SEED_COMMENTS !== '0';                        
 const WEDDING_RE = new RegExp(process.env.HEBE_WEDDING_PAGE_RE || 'cưới|bridal|cô dâu', 'i');
 const isWeddingPage = name => WEDDING_RE.test(name || '');
 const DONE = 'Thành công', FAIL = 'Thất bại';
+// ===== CHỐNG ĐĂNG TRÙNG khi máy-nhà (launchd 5') và GitHub Actions cùng quét một bảng =====
+// Không đổi được cấu trúc bảng (app thiếu quyền sửa cột), nên dùng chính cột Log làm "thẻ giữ chỗ":
+//   ghi  "<giờ> - ⏳ ĐANG ĐĂNG [claim:<mã>] (<nguồn>)"  → đọc lại → mã còn nguyên mới đăng.
+// Thẻ cũ hơn CLAIM_TTL_MS coi như tiến trình đã chết → cho phép giành lại.
+const RUNNER = process.env.RUNNER_NAME || (process.env.GITHUB_ACTIONS ? 'github' : 'may-nha');
+const CLAIM_ID = `${RUNNER}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`;
+const CLAIM_TTL_MS = parseInt(process.env.CLAIM_TTL_MS || '1200000', 10);   // 20 phút
+const CLAIM_RE = /\[claim:([^\]]+)\]/;
+const claimAgeMs = txt => { const m=String(txt||'').match(/^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})/); return m ? Date.now()-Date.parse(m[1].replace(' ','T')+'Z') : Infinity; };
+async function giuCho(tk, recId, logCu){
+  if(CLAIM_RE.test(logCu) && claimAgeMs(logCu) < CLAIM_TTL_MS) return false;      // máy khác đang đăng dòng này
+  await updateRow(tk, recId, { [F.log]: `${now()} - ⏳ ĐANG ĐĂNG [claim:${CLAIM_ID}] (${RUNNER})` });
+  await new Promise(r=>setTimeout(r, 1500));                                       // để lượt ghi kia (nếu có) kịp đè
+  const lai = await getRow(tk, recId);
+  const m = CLAIM_RE.exec(plain(lai?.fields?.[F.log])||'');
+  return !!m && m[1] === CLAIM_ID;                                                 // mã còn nguyên → phần của mình
+}
 const now = () => new Date().toISOString().replace('T',' ').slice(0,19);
 const log = (...a) => console.log(now(), ...a);
 const plain = v => v==null?'':typeof v==='string'?v:Array.isArray(v)?v.map(x=>x.text||x.name||'').join(''):(v.text||v.name||v.link||String(v));
@@ -68,6 +85,11 @@ async function listFields(tk, tableId) {
   const r=await fetch(`${CFG.LARK_DOMAIN}/open-apis/bitable/v1/apps/${CFG.APP_TOKEN}/tables/${tableId}/fields?page_size=200`,{headers:{Authorization:'Bearer '+tk}});
   const j=await r.json(); if(j.code!==0)throw new Error('fields: '+JSON.stringify(j));
   return (j.data.items||[]).map(f=>({name:f.field_name,type:f.type}));
+}
+async function getRow(tk, recId) {
+  const u=`${CFG.LARK_DOMAIN}/open-apis/bitable/v1/apps/${CFG.APP_TOKEN}/tables/${CFG.TABLE_ID}/records/${recId}`;
+  const r=await fetch(u,{headers:{Authorization:`Bearer ${tk}`}}); const j=await r.json();
+  return j.code===0 ? j.data.record : null;
 }
 async function updateRow(tk, recId, fields) {
   const r=await fetch(`${CFG.LARK_DOMAIN}/open-apis/bitable/v1/apps/${CFG.APP_TOKEN}/tables/${CFG.TABLE_ID}/records/${recId}`,
@@ -166,6 +188,11 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
     // Chỉ giữ page có đủ ID + token trong bảng 14.1
     const pages=pageRecIds.map(id=>({recId:id,...(pageMap.get(id)||{})})).filter(p=>p.fbId&&p.token);
     if(pages.length===0){ log(`  [LỖI] ${recId}: các Page link đều thiếu ID/token trong 14.1`); if(!DRY)await updateRow(tk,recId,{[F.status]:FAIL,[F.log]:`${now()} - Page thiếu ID/token`}); err++; continue; }
+
+    // GIÀNH PHẦN trước khi đăng — máy kia đang xử lý dòng này thì nhường.
+    if(!DRY && !(await giuCho(tk, recId, plain(row.fields[F.log])))){
+      log(`  [NHƯỜNG] ${recId}: máy khác đang đăng dòng này`); skip++; continue;
+    }
 
     const caption=plain(row.fields[F.caption]);
     const loai=plain(row.fields[F.type]);
