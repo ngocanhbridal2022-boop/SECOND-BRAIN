@@ -22,6 +22,8 @@ const ALBUM_IMGS    = ['album1','album2','album3','album3b','couple1'].map(n=>`$
 const GOI_IMGS      = ['goi1','goi2','goi3'].map(n=>`${IMG}/${n}.jpg`);
 
 const EBOOK='ebook.hebestudio.vn', XEMTUOI='xemtuoicuoi.hebestudio.vn';
+const TLCD='thu-lam-co-dau.hebestudio.vn';                    // phễu "Thử làm cô dâu" — trải nghiệm MIỄN PHÍ, thu lead về 22.1
+const TLCD_POSTER='https://thu-lam-co-dau.hebestudio.vn/poster.jpg';
 const SALE='cuoi.hebestudio.vn', HOTLINE='0964 545 457';
 
 const CMT_FEEDBACK = [
@@ -67,6 +69,15 @@ const CMT_EBOOK = [
   `HEBE tặng cẩm nang chuẩn bị cưới khỏi thiếu sót: ${EBOOK} 🎁`,
 ];
 
+// ===== (G) "THỬ LÀM CÔ DÂU" — poster + LINK đăng ký. Cô Ánh chốt 16/08/2026: hiện trên MỌI bài.
+// Trước đây kho này chỉ nằm ở bản Python của máy đăng CŨ (đã ngưng) nên thực tế chưa bao giờ lên comment.
+const CMT_TLCD = [
+  `👰 Bật mí nhẹ: HEBE đang có chương trình "THỬ LÀM CÔ DÂU" MIỄN PHÍ nè cả nhà — test makeup + làm tóc + thử váy cưới, diễn ra thứ Năm hàng tuần. Bạn nào quan tâm đăng ký giữ suất nha 💛\n👉 ${TLCD}`,
+  `🎁 Cô dâu ơi, HEBE tặng buổi trải nghiệm "Thử làm cô dâu" hoàn toàn MIỄN PHÍ (makeup · tóc · váy). Số lượng có hạn mỗi thứ Năm — đăng ký sớm nha!\n👉 ${TLCD}`,
+  `💄 Sợ makeup không hợp mặt, váy không tôn dáng? Thử trước tại HEBE cho chắc nha — MIỄN PHÍ, thứ Năm hàng tuần 👰\n👉 Đăng ký giữ suất: ${TLCD}`,
+  `✨ Ai đang chuẩn bị cưới đừng bỏ lỡ: "Thử làm cô dâu" MIỄN PHÍ tại HEBE — test makeup, làm tóc, thử váy cưới. Đăng ký ngay nha!\n👉 ${TLCD}`,
+];
+
 function hnum(seed, salt){
   const h = crypto.createHash('md5').update(String(seed)+'|'+salt).digest('hex');
   return parseInt(h.slice(0,12), 16);
@@ -78,13 +89,14 @@ function buildPlan(seed, count){
   // Xen kẽ: nội dung khoe + link nằm rải rác, KHÔNG dồn link xuống cuối. Mỗi link 1 comment RIÊNG.
   const plan = [
     { message: pick(CMT_FEEDBACK, seed,'fbk'), imageUrl: pick(FEEDBACK_IMGS, seed,'fbimg') },       // A feedback + ảnh
+    { message: pick(CMT_TLCD,     seed,'tlcd'), imageUrl: TLCD_POSTER },                             // G Thử làm cô dâu + poster (LUÔN có)
     { message: pick(CMT_SALE,     seed,'sal'), imageUrl: pick(ALBUM_IMGS, seed,'salimg') },          // D sale page + ảnh album
     { message: pick(CMT_VAY,      seed,'vay'), imageUrl: pick(useAlbum?ALBUM_IMGS:VAY_IMGS, seed,'vayimg') }, // B váy/album + ảnh
     { message: pick(CMT_XEMTUOI,  seed,'xt'),  imageUrl: null },                                      // E xem tuổi (riêng)
     { message: pick(CMT_OFFER,    seed,'ofr'), imageUrl: pick(GOI_IMGS, seed,'ofrimg') },             // C ưu đãi + ảnh gói
     { message: pick(CMT_EBOOK,    seed,'ebk'), imageUrl: null },                                      // F ebook (riêng)
   ];
-  if(count==null){ count = parseInt(process.env.HEBE_CMT_COUNT || '6', 10); if(isNaN(count)) count=6; }
+  if(count==null){ count = parseInt(process.env.HEBE_CMT_COUNT || '7', 10); if(isNaN(count)) count=7; }
   count = Math.max(3, Math.min(count, plan.length));
   return plan.slice(0, count);
 }
