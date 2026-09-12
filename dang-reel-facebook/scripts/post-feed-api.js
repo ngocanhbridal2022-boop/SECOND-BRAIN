@@ -34,9 +34,9 @@ const F = { link:'Link Page', type:'Loại', caption:'Nội dung', comment:'Comm
 const COMMENT_DELAY_MS = parseInt(process.env.COMMENT_DELAY_MS || '120000', 10);  // tự bình luận sau 2 phút
 const CH = require('./comment-hebe');                                             // bộ comment "lộn xộn về HEBE" + ảnh
 const SEED_CMT = process.env.HEBE_SEED_COMMENTS !== '0';                          // bật mặc định; đặt =0 để tắt
-// CHỈ seeding comment CƯỚI trên PAGE CƯỚI (né page cá nhân/makeup). Khớp tên page.
-const WEDDING_RE = new RegExp(process.env.HEBE_WEDDING_PAGE_RE || 'cưới|bridal|cô dâu', 'i');
-const isWeddingPage = name => WEDDING_RE.test(name || '');
+// KÊNH NÀO NỘI DUNG NẤY (cô Ánh chốt 12/09/2026): CH.buildPlanFor tự chọn bộ comment theo tên page —
+// page cưới → bộ cưới (feedback, váy, ưu đãi, thử làm cô dâu…); page beauty → bộ chụp ảnh cá nhân;
+// page cá nhân / makeup Academy → trả [] nghĩa là không seed gì.
 const DONE = 'Thành công', FAIL = 'Thất bại';
 // ===== CHỐNG ĐĂNG TRÙNG khi máy-nhà (launchd 5') và GitHub Actions cùng quét một bảng =====
 // Không đổi được cấu trúc bảng (app thiếu quyền sửa cột), nên dùng chính cột Log làm "thẻ giữ chỗ":
@@ -74,10 +74,23 @@ async function larkToken() {
     { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({app_id:CFG.APP_ID,app_secret:CFG.APP_SECRET}) });
   const j = await r.json(); if (j.code!==0) throw new Error('Lark token: '+JSON.stringify(j)); return j.tenant_access_token;
 }
+// Lark chặn (1254290 TooManyRequest) khi nhiều máy cùng đọc một base — máy nhà 5'/lần,
+// GitHub, máy quét bài đăng tay, các máy báo cáo... Gặp lượt hỏng 12/09/2026 nên thêm
+// chờ-rồi-thử-lại thay vì bỏ nguyên lượt đăng.
+const NGU = ms => new Promise(r=>setTimeout(r,ms));
+const LARK_BAN = new Set([1254290, 1254291, 1255040, 99991400]);   // quá nhiều yêu cầu / nghẽn
+async function larkGet(url, tk, nhan){
+  for(let i=0;i<5;i++){
+    const r=await fetch(url,{headers:{Authorization:'Bearer '+tk}});
+    const j=await r.json();
+    if(j.code===0) return j;
+    if(LARK_BAN.has(j.code) && i<4){ const cho=2000*(i+1); log(`  … Lark bận (${j.code}), chờ ${cho/1000}s rồi thử lại (${nhan})`); await NGU(cho); continue; }
+    throw new Error(nhan+': '+JSON.stringify(j));
+  }
+}
 async function listAll(tk, tableId) {
   let items=[], pt='';
-  do { const r=await fetch(`${CFG.LARK_DOMAIN}/open-apis/bitable/v1/apps/${CFG.APP_TOKEN}/tables/${tableId}/records?page_size=200`+(pt?'&page_token='+pt:''),{headers:{Authorization:'Bearer '+tk}});
-    const j=await r.json(); if(j.code!==0)throw new Error('list '+tableId+': '+JSON.stringify(j));
+  do { const j=await larkGet(`${CFG.LARK_DOMAIN}/open-apis/bitable/v1/apps/${CFG.APP_TOKEN}/tables/${tableId}/records?page_size=200`+(pt?'&page_token='+pt:''), tk, 'list '+tableId);
     items=items.concat(j.data.items||[]); pt=j.data.has_more?j.data.page_token:''; } while(pt);
   return items;
 }
@@ -200,9 +213,10 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
     const files = kind==='video' ? [ atts.find(isVid)||atts[0] ] : atts.filter(a=>isImg(a)||!isVid(a));
     log(`  >> ${recId} | ${pages.length} page [${pages.map(p=>p.name).join(', ')}] | ${kind} | ${files.length} file | "${caption.slice(0,40).replace(/\n/g,' ')}"`);
     if(DRY){ const c=plain(row.fields[F.comment]).trim(); if(c)log(`     [DRY] comment tay: ${c.slice(0,60)}`);
-      if(SEED_CMT && pages.some(p=>isWeddingPage(p.name))){ const plan=CH.buildPlan('dry_'+recId);
-        plan.forEach((x,i)=>log(`     [DRY] cmt HEBE ${i+1}${x.imageUrl?'📷':'  '}: ${x.message.slice(0,55).replace(/\n/g,' ')}${x.imageUrl?'  | '+x.imageUrl.replace(CH.IMG,'…'):''}`)); }
-      else if(SEED_CMT) log(`     [DRY] (không seed cmt HEBE — page ≠ cưới)`);
+      if(SEED_CMT) for(const pg of pages){ const plan=CH.buildPlanFor(pg.name,'dry_'+recId);
+        if(!plan.length){ log(`     [DRY] ${pg.name}: không seed (kênh không có bộ comment)`); continue; }
+        log(`     [DRY] ${pg.name}: ${plan.length} cmt`);
+        plan.forEach((x,i)=>log(`        ${i+1}${x.imageUrl?'📷':'  '} ${x.message.slice(0,60).replace(/\n/g,' ')}${x.imageUrl?'  | '+x.imageUrl.replace(CH.IMG,'…'):''}`)); }
       continue; }
 
     const tmp=[];
@@ -220,10 +234,10 @@ function scheduleMs(cell){ if(cell==null)return null; if(typeof cell==='number')
           if(commentText) pending.push({fbId:pg.fbId,token:pg.token,oid:res.objectId,msg:commentText,name:pg.name});
           // + Bộ comment "lộn xộn về HEBE" KÈM ẢNH (cô Ánh chốt 2026-07-20). CHỈ trên PAGE CƯỚI. Thả sau 2 phút.
           let seedN=0;
-          if(SEED_CMT && isWeddingPage(pg.name)) for(const c of CH.buildPlan(res.objectId)){
+          if(SEED_CMT) for(const c of CH.buildPlanFor(pg.name, res.objectId)){
             pending.push({fbId:pg.fbId,token:pg.token,oid:res.objectId,msg:c.message,img:c.imageUrl,name:pg.name}); seedN++;
           }
-          results.push(`${pg.name}: OK ${res.objectId}${commentText?' [+cmt hẹn]':''}${seedN?` [+${seedN} cmt HEBE]`:(SEED_CMT&&!isWeddingPage(pg.name)?' [không seed: page ≠ cưới]':'')}`);
+          results.push(`${pg.name}: OK ${res.objectId}${commentText?' [+cmt hẹn]':''}${seedN?` [+${seedN} cmt HEBE]`:(SEED_CMT?' [không seed: kênh không có bộ comment]':'')}`);
           refs.push({t:'fb',oid:res.objectId,page:pg.recId,link:res.permalink});
           anyOk=true; log(`     ✔ ${pg.name}: ${res.permalink}`);
         }catch(e){ const m=String(e.message||e).slice(0,150); results.push(`${pg.name}: LỖI ${m}`); log(`     ✖ ${pg.name}: ${m}`); }

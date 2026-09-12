@@ -22,6 +22,7 @@ const ALBUM_IMGS    = ['album1','album2','album3','album3b','couple1'].map(n=>`$
 const GOI_IMGS      = ['goi1','goi2','goi3'].map(n=>`${IMG}/${n}.jpg`);
 
 const EBOOK='ebook.hebestudio.vn', XEMTUOI='xemtuoicuoi.hebestudio.vn';
+const CHUPANH='hebestudio.vn/chup-gia-dinh', WEB='hebestudio.vn', MAKEUP='hebestudio.vn/makeup';
 const TLCD='thu-lam-co-dau.hebestudio.vn';                    // phễu "Thử làm cô dâu" — trải nghiệm MIỄN PHÍ, thu lead về 22.1
 const TLCD_POSTER='https://thu-lam-co-dau.hebestudio.vn/poster.jpg';
 const SALE='cuoi.hebestudio.vn', HOTLINE='0964 545 457';
@@ -78,6 +79,28 @@ const CMT_TLCD = [
   `✨ Ai đang chuẩn bị cưới đừng bỏ lỡ: "Thử làm cô dâu" MIỄN PHÍ tại HEBE — test makeup, làm tóc, thử váy cưới. Đăng ký ngay nha!\n👉 ${TLCD}`,
 ];
 
+// ===== KHO BEAUTY — cho page "HEBE Chụp Ảnh - Cá Nhân, Sinh Nhật, Beauty" =====
+// Cô Ánh chốt 12/09/2026: kênh nào nội dung nấy — page beauty KHÔNG thả comment cưới
+// (feedback cô dâu, váy, thử làm cô dâu, xem tuổi cưới đều lệch với khách chụp cá nhân).
+const CMT_BEAUTY = [
+  `Concept này HEBE chụp cho khách cá nhân nè 📸 Bạn nào thích để lại tim, HEBE tư vấn concept hợp gu nha!`,
+  `Chụp ảnh cá nhân đẹp không nằm ở máy xịn — nằm ở concept hợp với mình 💫 HEBE giúp bạn chọn nha.`,
+  `Sắp sinh nhật mà chưa biết chụp kiểu gì? Nhắn HEBE, tụi mình gợi ý concept + trang phục luôn 🎂`,
+];
+const CMT_BEAUTY_LINK = [
+  `Xem các concept & bảng giá chụp của HEBE ở đây nha: ${CHUPANH} 🌿`,
+  `Dịch vụ chụp cá nhân · gia đình · beauty của HEBE mình để đủ tại ${CHUPANH} 📷`,
+  `Muốn xem thêm ảnh thật và giá thì ghé ${WEB} nha cả nhà 🤍`,
+];
+const CMT_BEAUTY_MAKEUP = [
+  `Đi chụp mà makeup không hợp là uổng cả buổi 💄 HEBE làm luôn phần trang điểm + làm tóc nha: ${MAKEUP}`,
+  `Chụp ở HEBE có sẵn makeup & làm tóc, khỏi chạy đi chạy lại 💗 Xem tại ${MAKEUP}`,
+];
+const CMT_BEAUTY_CTA = [
+  `Đặt lịch chụp hoặc hỏi giá cứ inbox HEBE, hoặc gọi ${HOTLINE} nha 🤍`,
+  `Bạn nào muốn giữ lịch cuối tuần thì nhắn sớm nha, HEBE hay kín lịch ✨ ${HOTLINE}`,
+];
+
 function hnum(seed, salt){
   const h = crypto.createHash('md5').update(String(seed)+'|'+salt).digest('hex');
   return parseInt(h.slice(0,12), 16);
@@ -101,12 +124,36 @@ function buildPlan(seed, count){
   return plan.slice(0, count);
 }
 
-module.exports = { buildPlan, IMG };
+// Bộ comment cho kênh BEAUTY (4 comment, chữ — ảnh cưới sẵn có không hợp mảng này)
+function buildPlanBeauty(seed, count){
+  const plan = [
+    { message: pick(CMT_BEAUTY,        seed,'bt'),  imageUrl: null },
+    { message: pick(CMT_BEAUTY_LINK,   seed,'btl'), imageUrl: null },
+    { message: pick(CMT_BEAUTY_MAKEUP, seed,'btm'), imageUrl: null },
+    { message: pick(CMT_BEAUTY_CTA,    seed,'btc'), imageUrl: null },
+  ];
+  if(count==null){ count = parseInt(process.env.HEBE_CMT_BEAUTY_COUNT || '4', 10); if(isNaN(count)) count=4; }
+  return plan.slice(0, Math.max(2, Math.min(count, plan.length)));
+}
+
+// Chọn bộ comment theo TÊN PAGE. Trả [] nghĩa là kênh này không seed comment.
+const RE_CUOI   = /cưới|bridal|cô dâu/i;
+const RE_BEAUTY = /chụp ảnh|beauty|sinh nhật|cá nhân/i;
+function buildPlanFor(pageName, seed, count){
+  const n = pageName || '';
+  if (RE_CUOI.test(n))   return buildPlan(seed, count);          // kênh cưới → bộ cưới 7 comment
+  if (RE_BEAUTY.test(n)) return buildPlanBeauty(seed, count);    // kênh beauty → bộ beauty 4 comment
+  return [];                                                      // page cá nhân / makeup Academy → không seed
+}
+
+module.exports = { buildPlan, buildPlanBeauty, buildPlanFor, IMG };
 
 // Xem thử (không gọi Facebook):  node comment-hebe.js [seed]
 if (require.main === module) {
   const seed = process.argv[2] || 'demo_post_123';
-  buildPlan(seed).forEach((c,i)=>{
+  const who = process.argv[3] || 'HeBe Studio- Váy Cưới & Makeup Cô Dâu Minh Hưng';
+  console.log('KÊNH:', who);
+  buildPlanFor(who, seed).forEach((c,i)=>{
     console.log(`--- Comment ${i+1} ---`);
     console.log(c.message);
     console.log(`[ảnh] ${c.imageUrl || '(không ảnh)'}\n`);
